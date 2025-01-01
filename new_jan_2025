@@ -1,0 +1,532 @@
+//+------------------------------------------------------------------+
+//|                                                      CountBoom |
+//|                                      Copyright 2020, CompanyName |
+//|                                       http://www.companyname.net |
+//+------------------------------------------------------------------+
+#include <main.mqh>
+//+------------------------------------------------------------------+
+//|                                               TickCounterBoom.mq5|
+//|                        Copyright 2024, Your Name                |
+//|                   For use with MT5 (Expert Advisor)             |
+//+------------------------------------------------------------------+
+#property copyright "Y_bot"
+#property version   "1.01"
+#property strict
+
+
+// Trade library include
+#include <Trade\Trade.mqh>
+
+// Input settings
+input int      takeTradeCount = 500;
+int            tickCount = 0;
+datetime       lastBoomTime = NULL;
+int            boomNameCount = 0;
+bool           hasBoomed = false;
+bool           hasStoredCount = false;
+input int      MagicNumber = 12345;
+string         tradeSymbol = Symbol();
+int            currentTrend = -1;
+
+// Global variables
+double         currentClose, previousClose = 0.0;  // Global variable to store the last price
+double         BoomThreshold = 1.0;  // Define the threshold in points (adjust based on instrument)
+
+// Define the name of the global variable
+string   globalVarName = "tickCount";
+string   globalLastBoomTimeName = "LastBoomTime";
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   Print("EA Initialized: Tick Counter Boom EA Started.");
+   LoadTickCount(); // Load the previous tick count
+   LoadLastBoomTime(); // Load the last boom time
+// Initialize Trading Object
+   Trade.SetExpertMagicNumber(MagicNumber);
+   return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   Print("EA Deinitialized: Tick Counter Boom EA Stopped.");
+   SaveTickCount(); // Save the tick count when the EA is removed or recompiled
+   SaveBoomTimeCount(); // Save the last boom time when the EA is removed or recompiled
+}
+
+CTrade Trade;
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Check if enough bars for analysis
+   if (Bars(tradeSymbol, _Period) < 100) return;
+   
+   string trendStrength = AdvancedTrendStrength();
+   
+       // Print Trend Information
+   Comment("\t\t\tTrend Strength: ", trendStrength);
+   tickCount++;
+   PrintFormat("Tick Count: %d", tickCount);
+   
+   // Print(isOpenedOrder(tradeSymbol), " ", canTakeTrade(tickCount));
+
+   if(trendStrength == "Very Strong Bullish" || trendStrength == "Strong Bullish") {
+      if(canTakeTrade(tickCount)) {
+         // return;
+         // Alert("Here Hhere");
+         // 7GV0dazkpbFM7pB5DjKEYuyB16lJzsDy
+         Print("aa");
+      }
+   }
+   
+   //Print("hasBoom: ", hasBoomed);
+   //Print("hasStoredCount: ", hasStoredCount);
+   if(checkBoom())
+   {
+       // Alert("TickCountCheck: ", tickCount);
+      // Details to send to DB
+      string boomName = "Boom " + IntegerToString(boomNameCount);
+      //if(sendToDb(boomName, tickCount) && !hasStoredCount)
+      //{
+      //   Alert("Tick count sent to DB: ", tickCount);
+      //   hasStoredCount = true; // Mark as sent
+      //}
+      
+      // Update boom when there is a symbol and the profit is current price is below open price
+      updateLastBoomTime(tradeSymbol);
+      
+       // Alert("Here");
+       tickCount = 0;
+       boomNameCount = boomNameCount + 1;
+   }
+   
+   if(!resetBoomCount()) {}
+   
+   
+   if(!takeProfit(tradeSymbol, lastBoomTime)) {
+      
+   }
+   
+   closeTradeBySl(tickCount, tradeSymbol, lastBoomTime);
+   
+   Print("Last boom time: ", lastBoomTime);
+   
+   SaveTickCount();
+   SaveBoomTimeCount();
+
+}
+
+//+------------------------------------------------------------------+
+//|   Functions                                                      |
+//+------------------------------------------------------------------+
+
+
+// Function to load tick count from global variable
+void LoadTickCount() {
+    // Check if the global variable exists
+    if(GlobalVariableCheck(globalVarName)) {
+        // If it exists, load the value
+        tickCount = (int) GlobalVariableGet(globalVarName);
+    } else {
+        // If it doesn't exist, initialize to 0
+        tickCount = 0;
+    }
+}
+
+// Function to load last boom time from global variable
+void LoadLastBoomTime() {
+   // Check if the global variable exists
+   if(GlobalVariableCheck(globalLastBoomTimeName)) {
+      // If it exists, load the value
+      lastBoomTime = (datetime) GlobalVariableGet(globalLastBoomTimeName);
+   } else {
+      // If it doesn't exist, initialize to 0
+      lastBoomTime = NULL;
+   }
+}
+
+// Function to save tick count to global variable
+void SaveTickCount() {
+    // Save the current tick count to the global variable
+    GlobalVariableSet(globalVarName, tickCount);
+}
+
+// Function to save last boom time to global variable
+void SaveBoomTimeCount() {
+   // Save the last Boom count to the global variable
+   GlobalVariableSet(globalLastBoomTimeName, lastBoomTime);
+}
+
+
+//bool isOpenedOrder(string symbol) {
+//    if(PositionSelect(symbol)) {
+//         ulong magicNo  =  PositionGetInteger(POSITION_MAGIC);
+//         Print("a: ", magicNo);
+//         if(magicNo != MagicNumber) { return true; }
+//         else { return false; }
+//    }
+//    
+//    return false;
+//}
+
+void updateLastBoomTime(string symbol) {
+      if(PositionSelect(_Symbol)) {
+         lastBoomTime = (datetime) getCurrentTime();
+      }
+   int totalorders = PositionsTotal();
+   for(int i = 0; i < totalorders; i++) {
+         // Get ticket
+         
+         string positionSymbol = PositionGetSymbol(i);
+         if(positionSymbol != symbol) {
+            continue; // Skip this position.
+         }
+         
+         ulong ticket = PositionGetTicket(i);
+         if(ticket <= 0) {Print("Failed to get position ticket"); return;}
+         
+         if(!PositionSelectByTicket(ticket)) {Print("Failed to select position"); return;}
+         
+         double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+         double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+         //Print("P: ", profit);
+         datetime currentTime = TimeCurrent();
+         
+         if(currentPrice < openPrice) {
+            lastBoomTime = (datetime) getCurrentTime();
+         }
+      }
+}
+
+
+datetime getLastBoom() {
+   string sendData = "";
+   sendData += StringFormat("%s,%d|", "a", 1);
+   string response = httpGET("http://localhost/mql_api/getLastBoomTime.php?fetching="+sendData);
+   if(response == "error")
+   {
+      return -1;
+   }
+   
+   return (datetime) response;
+}
+
+string getCurrentTime() {
+   datetime timeCurrent = TimeCurrent();
+   string date =   TimeToString(timeCurrent, TIME_DATE | TIME_MINUTES | TIME_SECONDS);
+   
+   return date;
+}
+
+bool sendToDb(string boomname, int count) {
+   string   sendData = "";
+   string date = getCurrentTime();
+   sendData += StringFormat("%s,%d, %s|", boomname, count, date);
+   string response = httpGET("http://localhost/mql_api/boomd.php?insert="+sendData);
+
+   Alert("Response: ", response);
+   if(response == (string)'1')
+   {
+      return true;
+   }
+   return false;
+}
+
+bool canTakeTrade(int tickcount) {
+    if (tickcount >= takeTradeCount) {
+        bool hasBotTrade = false;
+
+        // Check all open positions for the symbol
+        int totalPositions = PositionsTotal();
+        Print("Here: ", totalPositions);
+        for (int i = 0; i < totalPositions; i++) {
+            if (PositionGetSymbol(i) == _Symbol) {
+                ulong magicNo = PositionGetInteger(POSITION_MAGIC);
+                ulong ordertype = PositionGetInteger(POSITION_TYPE);
+
+                // Check if the bot already has an open buy trade
+                if (magicNo == MagicNumber && ordertype == POSITION_TYPE_BUY) {
+                    hasBotTrade = true;
+                    break;
+                }
+            }
+            else
+            {
+               continue;
+            }
+        }
+
+        // Prevent the bot from taking another trade if it already has one
+        if (hasBotTrade) {
+            Print("The bot already has an open buy trade for symbol: ", _Symbol);
+            return false;
+        }
+
+        // No bot trade exists; proceed to take the trade
+        double LotSize = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+        bool aTrade = Trade.Buy(LotSize, _Symbol, 0, 0, 0, "JILF");
+        if (!aTrade) {
+            Print("Could not take the trade: ", GetLastError());
+            return false;
+        }
+    }
+    return true;
+}
+
+
+
+bool takeProfit(string symbol, datetime lastboomtime) {
+   // 
+   int totalorders = PositionsTotal();
+   for(int i = 0; i < totalorders; i++) {
+      // Get ticket
+      
+      string positionSymbol = PositionGetSymbol(i);
+      if(positionSymbol != symbol) {
+         continue; // Skip this position.
+      }
+      
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) {Print("Failed to get position ticket"); return false;}
+      
+      if(!PositionSelectByTicket(ticket)) {Print("Failed to select position"); return false;}
+      
+      double profit = PositionGetDouble(POSITION_PROFIT);
+      //Print("P: ", profit);
+      datetime currentTime = TimeCurrent();
+      
+      if(profit >= 3.00 && (currentTime - lastboomtime) >= 5 * 60) {
+         if(Trade.PositionClose(ticket)) {
+            lastBoomTime = (datetime) getCurrentTime();
+         }
+         Alert("Closed by tp 1: ", ticket);
+         return true;
+      }
+      else if((profit < 3.00 && profit >= 2.0) && ((currentTime - lastboomtime) >= 2 * 60)) {
+         if(Trade.PositionClose(ticket)) {
+            lastBoomTime = (datetime) getCurrentTime();
+         }
+         Alert("Closed by tp 2: ", ticket);
+         return true;
+      }
+      else if(profit < 2.00 && profit > 0.5) {
+         if(Trade.PositionClose(ticket)) {
+            lastBoomTime = (datetime) getCurrentTime();
+         }
+         Alert("Closed by tp 3: ", ticket);
+         return true;
+      }
+      else
+      {
+         // Print("Error closing trade in profit: ", GetLastError());
+      }
+      
+      
+      // Get profit
+      // Get open price
+      // get entry time
+      
+      // if the profit > $3 && boomTime is < (4min less than) currenTime // Close the trade
+      // If the profit < $3 && profit > $0 // Close the trade
+   }
+   
+   return false;
+}
+
+bool closeTradeBySl(int tickcount, string symbol, datetime lastboomtime) {
+   
+   int totalorders = PositionsTotal();
+   for(int i = 0; i < totalorders; i++) {
+      // Get ticket
+      
+      string positionSymbol = PositionGetSymbol(i);
+      if(positionSymbol != symbol) {
+         continue; // Skip this position.
+      }
+      
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) {Print("Failed to get position ticket"); return false;}
+      
+      if(!PositionSelectByTicket(ticket)) {Print("Failed to select position"); return false;}
+      
+      double profit = PositionGetDouble(POSITION_PROFIT);
+      datetime openTime = (datetime) PositionGetInteger(POSITION_TIME);
+      //Print("T: ", openTime);
+      datetime currentTime = TimeCurrent();
+      if(tickcount >= 5500) {
+         // Close trade
+         // Alert("Me 1");
+         Alert("Closed by sl 1: ", ticket);
+         Trade.PositionClose(ticket);
+      }
+      else if((lastboomtime > openTime) && tickcount >= 8000 && currentTrend == 0) {
+         Trade.PositionClose(ticket);
+         Print((lastboomtime > openTime), " Open time: ", openTime, " LastBoom Time: ", lastboomtime);
+         // Alert("Me 2");
+         Alert("Closed by sl 2: ", ticket);
+         return true;
+      }
+      else if((lastboomtime > openTime) && tickcount >= 6000 && currentTrend == 1) {
+         Trade.PositionClose(ticket);
+         Print((lastboomtime > openTime), " Open time: ", openTime, " LastBoom Time: ", lastboomtime);
+         // Alert("Me 3");
+         Alert("Closed by sl 3: ", ticket);
+         return true;
+      }
+      else
+      {
+         // Print("Error closing trade in profit: ", GetLastError());
+      }
+   }
+   return false;
+}
+
+bool checkBoom() {
+   currentClose = iClose(_Symbol, PERIOD_CURRENT, 0);
+   previousClose = iClose(_Symbol, PERIOD_CURRENT, 1); 
+   if(((currentClose - previousClose) >= BoomThreshold) && !hasBoomed)
+   {
+      hasBoomed = true;
+      Print("Boom detected! Large price movement: ", currentClose - previousClose, " move");
+      return true;
+   }
+   return false;
+}
+
+bool resetBoomCount() {
+   // Reset hasBoomed
+   if(((currentClose - previousClose) < BoomThreshold) && hasBoomed)
+   {
+      hasBoomed = false;
+      hasStoredCount = false; // Allow sending for the next boom
+      return true;
+   }
+   return false;
+}
+
+// Advanced Trend Strength Function
+string AdvancedTrendStrength()
+{
+   double ma20[], ma50[], ma100[], ma200[];
+   ArraySetAsSeries(ma20, true);
+   ArraySetAsSeries(ma50, true);
+   ArraySetAsSeries(ma100, true);
+   ArraySetAsSeries(ma200, true);
+
+   int ma20Handle = iMA(_Symbol, 0, 20, 0, MODE_EMA, PRICE_CLOSE);
+   int ma50Handle = iMA(_Symbol, 0, 50, 0, MODE_EMA, PRICE_CLOSE);
+   int ma100Handle = iMA(_Symbol, 0, 100, 0, MODE_EMA, PRICE_CLOSE);
+   int ma200Handle = iMA(_Symbol, 0, 200, 0, MODE_EMA, PRICE_CLOSE);
+
+   CopyBuffer(ma20Handle, 0, 0, 3, ma20);
+   CopyBuffer(ma50Handle, 0, 0, 3, ma50);
+   CopyBuffer(ma100Handle, 0, 0, 3, ma100);
+   CopyBuffer(ma200Handle, 0, 0, 3, ma200);
+
+    int bullishCount = 0;
+    int bearishCount = 0;
+
+   if(ma20[0] > ma50[0])
+      bullishCount++;
+   if(ma50[0] > ma100[0])
+      bullishCount++;
+   if(ma100[0] > ma200[0])
+      bullishCount++;
+
+   if(ma20[0] < ma50[0])
+      bearishCount++;
+   if(ma50[0] < ma100[0])
+      bearishCount++;
+   if(ma100[0] < ma200[0])
+      bearishCount++;
+
+   if(bullishCount == 3)
+   {
+      currentTrend = 0;
+      return "Very Strong Bullish";
+   }
+   if(bullishCount == 2)
+   {
+      currentTrend = 0;
+      return "Strong Bullish";
+   }
+   if(bearishCount == 3)
+   {
+      currentTrend = 1;
+      return "Very Strong Bearish";
+   }
+   if(bearishCount == 2)
+   {
+      currentTrend = 1;
+      return "Strong Bearish";
+   }
+
+   return "Neutral Trend";
+}
+
+
+#import "wininet.dll"
+int InternetOpenW(string sAgent, int lAccessType, string sProxyName="", string sProxyBypass="", int lFlags=0);
+int InternetOpenUrlW(int hinternetSession, string sUrl, string sHeaders="", int lHeadersLength=0, int lFlags=0, int lContext=0);
+int InternetReadFile(int hFile, uchar &sBuffer[], int lNumBytesToRead, int &lNumberOfBytesRead);
+int InternetCloseHandle(int hInet);
+
+
+#import
+int hSession_IEType;
+int hSession_Direct;
+int Internet_Open_Type_Preconfig=0;
+int Internet_Open_Type_Direct=1;
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int hSession(bool Direct)
+  {
+   string InternetAgent="Mozilla/4.0 (compatible: MSIE 6.0; Windows NT 5.1; Q312461)";
+   if(Direct)
+     {
+      if(hSession_Direct==0)
+        {
+         hSession_Direct=InternetOpenW(InternetAgent, Internet_Open_Type_Direct, "0", "0", 0);
+        }
+      return (hSession_Direct);
+     }
+   else
+     {
+      if(hSession_IEType==0)
+        {
+         hSession_IEType = InternetOpenW(InternetAgent, Internet_Open_Type_Preconfig, "0", "0", 0);
+        }
+      return (hSession_IEType);
+     }
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+string httpGET(string strUrl)
+  {
+   int handler = hSession(false);
+   int response = InternetOpenUrlW(handler, strUrl);
+   if(response == 0)
+      return("0");
+   uchar ch[100000];
+   string toStr="";
+   int dwBytes, h=-1;
+   while(InternetReadFile(response, ch, 100000, dwBytes))
+     {
+      if(dwBytes<=0)
+         break;
+      toStr=toStr+CharArrayToString(ch, 0, dwBytes);
+     }
+   InternetCloseHandle(response);
+   return (toStr);
+  }
+//+------------------------------------------------------------------+
